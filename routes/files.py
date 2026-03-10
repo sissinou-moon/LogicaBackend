@@ -30,6 +30,7 @@ def scanFolders(path: Path):
 
     return items
 
+# ------------------ CREATE FOLDER ------------------
 @router.post("/create/folder")
 async def function(body: dict):
     path = body.get("path")
@@ -57,6 +58,7 @@ async def function(body: dict):
         }
     }
 
+# ------------------ CREATE FILE ------------------
 @router.post("/create/file")
 async def function(body: dict):
     path = body.get("path")
@@ -87,6 +89,7 @@ async def function(body: dict):
         }
     }
 
+# ------------------ RETURN ALL STRUCTURE ------------------
 @router.get("/list")
 async def function():
     if not BASE_PATH.exists():
@@ -98,6 +101,7 @@ async def function():
         "data": scanFolders(BASE_PATH)
     }
 
+# ------------------ RENAME ------------------
 @router.post("/rename")
 async def function(body: dict):
     old_path = body.get("old_path")
@@ -147,5 +151,30 @@ async def delete_item(body: dict):
     return {
         "success": True,
         "message": "Item deleted successfully",
+        "data": {"path": str(full_path)}
+    }
+
+# ------------------ SAVE ------------------
+@router.post("/save")
+async def function(body: dict):
+    path = body.get("path")
+    content = body.get("content")
+
+    if not path or not content:
+        raise HTTPException(status_code=420, detail="Path and content are required")
+
+    full_path = BASE_PATH / path
+    if not full_path.exists():
+        raise HTTPException(status_code=404, detail="Item does not exist")
+
+    if full_path.is_dir():
+        raise HTTPException(status_code=420, detail="Item is a directory")
+
+    with open(full_path, "w") as f:
+        f.write(content)
+
+    return {
+        "success": True,
+        "message": "Item saved successfully",
         "data": {"path": str(full_path)}
     }
