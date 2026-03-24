@@ -1,10 +1,16 @@
-import google.generativeai as genai
+#import google.generativeai as genai
 import os
 import json
+from openai import OpenAI
 
-genai.configure(api_key="AIzaSyCQrckUSrppTYxf7e6w2QO2fPqm8LieR-o")
+#genai.configure(api_key="AIzaSyCQrckUSrppTYxf7e6w2QO2fPqm8LieR-o")
 
-model = genai.GenerativeModel("gemma-3-27b-it")
+#model = genai.GenerativeModel("gemma-3-27b-it")
+
+client = OpenAI(
+    base_url="https://router.huggingface.co/v1",
+    api_key="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",
+)
 
 async def askAI(message: str):
     prompt = f"""
@@ -13,7 +19,6 @@ You are an AI file manager.
 Always respond ONLY with valid JSON.
 
 When generating markdown:
-- Use double line breaks (\n\n) between paragraphs
 - Use '-' for bullet lists, '##' for headings
 - Bold important words with '**'
 Always return clean markdown content.
@@ -22,6 +27,8 @@ JSON format:
 {{
   "action": "create_file | delete_file | rename_file | list_files | answer",
   "path": "file path or folder path",
+  "old_path": "old file/folder path (only for rename_file)",
+  "new_path": "new file/folder path (only for rename_file)",
   "content": "markdown file content",
   "message": "response to the user"
 }}
@@ -29,13 +36,27 @@ JSON format:
 User request:
 {message}
 """
-    response = model.generate_content(prompt)
-    text = response.text.strip()
+    completion = client.chat.completions.create(
+        model="XiaomiMiMo/MiMo-V2-Flash:novita",
+        messages=[
+            {
+                "role": "system",
+                "content": prompt
+            },
+            {
+                "role": "user",
+                "content": message
+            }
+        ],
+    )
 
-    # remove markdown if Gemini adds it
-    if text.startswith("```"):
-        text = text.replace("```json", "").replace("```", "").strip()
+    raw = completion.choices[0].message.content
 
-    data = json.loads(text)
-
-    return data
+    try:
+        return json.loads(raw)   # ✅ convert to real JSON
+    except:
+        return {
+            "action": "answer",
+            "message": raw,
+            "data": None
+        }
