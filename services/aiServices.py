@@ -9,7 +9,7 @@ from openai import OpenAI
 
 client = OpenAI(
     base_url="https://router.huggingface.co/v1",
-    api_key="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",
+    api_key="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",
 )
 
 async def askAI(message: str):
@@ -24,14 +24,18 @@ When generating markdown:
 Always return clean markdown content.
 
 JSON format:
-{{
-  "action": "create_file | delete_file | rename_file | list_files | answer",
-  "path": "file path or folder path",
-  "old_path": "old file/folder path (only for rename_file)",
-  "new_path": "new file/folder path (only for rename_file)",
-  "content": "markdown file content",
-  "message": "response to the user"
-}}
+{
+    [{
+        "action": "create_file | create_folder | delete_file | rename_file | list_files | answer | modify_content",
+        "path": "file path or folder path",
+        "old_path": "old file/folder path (only for rename_file)",
+        "new_path": "new file/folder path (only for rename_file)",
+        "content": "markdown file content",
+        "message": "response to the user"
+    }]
+}
+
+It can be more than one action, simply return more than one json in the list
 
 User request:
 {message}
