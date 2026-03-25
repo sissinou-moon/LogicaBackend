@@ -1,3 +1,5 @@
+from services.chromadb import add_file_to_memory
+from services.chromadb import modify_file_in_memory
 from fastapi import APIRouter, HTTPException
 from services.aiServices import askAI
 from pathlib import Path
@@ -11,6 +13,7 @@ BASE_PATH = Path("workspace")
 @router.post("/")
 async def function(body: dict):
     message = body.get("message")
+    history = body.get("history", []) # Get history from frontend
 
     if not message :
         raise HTTPException(
@@ -19,7 +22,7 @@ async def function(body: dict):
         )
 
 
-    response = await askAI(message)
+    response = await askAI(message, history)
 
     # Standardize to a list of action objects
     if isinstance(response, list):
@@ -50,6 +53,10 @@ async def function(body: dict):
                     if item.get("content"):
                         with open(full_path, "w") as f:
                             f.write(item.get("content"))
+                    await add_file_to_memory(
+                        path=path,
+                        content=item.get("content")
+                    )
             else:
                 item.update({"message": "Path is required to create a file"})
         elif action == "create_folder":
@@ -112,6 +119,10 @@ async def function(body: dict):
                 if full_path.exists():
                     with open(full_path, "w") as f:
                         f.write(content)
+                    await modify_file_in_memory(
+                        path=path,
+                        content=content
+                    )
                 else:
                     item.update({"message": f"Item at {path} doesn't exist"})
             else:
@@ -122,5 +133,9 @@ async def function(body: dict):
     return {
         "success": True,
         "message": "Chat",
-        "data": response
+        "data": response,
+        "updated_history": history + [
+            {"role": "user", "content": message},
+            {"role": "assistant", "content": str(response)}
+        ]
     }
