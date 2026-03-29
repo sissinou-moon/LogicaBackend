@@ -1,80 +1,59 @@
-#import google.generativeai as genai
-from services.chromadb import search_chroma
-import os
+"""
+AI Service — core reasoning engine.
+
+Uses MiMo-V2-Flash for final reasoning (HuggingFace).
+Context injection handled by context_builder.
+Intent detection handled by intent.py (separate API key).
+"""
+
+from services.intent import detect_intent
+from services.context_builder import build_context
 import json
-from openai import OpenAI
 import ast
+from openai import OpenAI
 
-#genai.configure(api_key="AIzaSyCQrckUSrppTYxf7e6w2QO2fPqm8LieR-o")
-
-#model = genai.GenerativeModel("gemma-3-27b-it")
-
+# MiMo-V2-Flash — primary reasoning model (HuggingFace)
 client = OpenAI(
     base_url="https://router.huggingface.co/v1",
     api_key="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",
 )
 
+
 async def askAI(message: str, history: list = []):
+    """
+    Main AI reasoning function.
 
-    search_results = await search_chroma(message) 
-    
-    # Format the retrieved knowledge
-    search_results = await search_chroma(message)
+    Flow:
+    1. Detect intent (lightweight, cached)
+    2. Build structured context based on intent (only queries memory if needed)
+    3. Inject context into system prompt
+    4. Call MiMo-V2-Flash for reasoning
+    5. Return structured actions + intent_result for downstream use
 
-    knowledge_context = ""
+    Returns:
+        tuple: (actions_list, intent_result_dict)
+    """
 
-    if search_results and "documents" in search_results:
-        docs = search_results.get("documents", [[]])[0]
-        metas = search_results.get("metadatas", [[]])[0]
+    # 1. Intent Detection (OpenRouter — cheap, cached)
+    intent_result = await detect_intent(message)
 
-        for i in range(min(2, len(docs))):
-            path = metas[i].get("path", "") if i < len(metas) else ""
-            content = docs[i][:300]
+    # 2. Build Context (only queries memory layers that intent says are needed)
+    knowledge_context = await build_context(intent_result, message)
 
-            knowledge_context += f"File: {path}\nContent: {content}\n\n"
+    # 3. Build System Prompt with structured context
+    prompt = _build_system_prompt(knowledge_context, intent_result)
 
-    prompt = f"""
-You are an AI file manager.
-
-Always respond ONLY with valid JSON.
-
-KNOWLEDGE FROM MEMORY (RAG):
-{knowledge_context}
-
-
-When generating markdown:
-- Use '-' for bullet lists, '##' for headings
-- Bold important words with '**'
-Always return clean markdown content.
-
-INSTRUCTIONS:
-- Always respond ONLY with valid JSON.
-- Use the provided context to answer questions about file contents.
-- If the user asks to "modify" a file, use 'modify_content' action.
-
-JSON format:
-[
-    {{
-        "action": "create_file | create_folder | delete_file | rename_file | list_files | answer | modify_content",
-        "path": "file path",
-        "content": "content",
-        "message": "response to user"
-    }}
-]
-
-It can be more than one action, simply return more than one json in the list
-
-"""
-    # 2. Build the message list including History
+    # 4. Build message list with history
     messages = [{"role": "system", "content": prompt}]
-    
-    # Add previous chat history (Short-term memory)
+
+    # Add previous chat history (Short-term / Working memory)
     for msg in history:
         messages.append(msg)
-        
-    # Add the current user message
+
+    # Add current user message
     messages.append({"role": "user", "content": message})
 
+    # 5. Call MiMo-V2-Flash for final reasoning
     completion = client.chat.completions.create(
         model="XiaomiMiMo/MiMo-V2-Flash:novita",
         messages=messages,
@@ -82,23 +61,94 @@ It can be more than one action, simply return more than one json in the list
 
     raw = completion.choices[0].message.content.strip()
 
-    # remove ``` blocks
+    # Clean response
+    actions = _parse_response(raw)
+
+    return actions, intent_result
+
+
+def _build_system_prompt(knowledge_context: str, intent_result: dict) -> str:
+    """Build an optimized system prompt based on intent and available context."""
+
+    intent = intent_result.get("intent", "question")
+
+    # Base instruction
+    prompt = """You are an AI file manager with memory and learning capabilities.
+
+Always respond ONLY with valid JSON.
+
+"""
+
+    # Inject structured context (only if we have any)
+    if knowledge_context:
+        prompt += f"""MEMORY CONTEXT (use this to inform your responses):
+{knowledge_context}
+
+"""
+
+    # Intent-specific hints
+    intent_hints = {
+        "create": "The user wants to CREATE something. Focus on file/folder creation.",
+        "modify": "The user wants to MODIFY existing content. Use your memory to find the right file.",
+        "delete": "The user wants to DELETE something. Confirm the path.",
+        "search": "The user is SEARCHING for information. Use your memory context above.",
+        "question": "The user is asking a QUESTION. Use your memory context to give an informed answer.",
+        "list": "The user wants to LIST workspace contents.",
+        "recall": "The user wants to RECALL past actions. Use the recent actions from memory.",
+    }
+
+    if intent in intent_hints:
+        prompt += f"INTENT: {intent_hints[intent]}\n\n"
+
+    prompt += """INSTRUCTIONS:
+- Always respond ONLY with valid JSON.
+- Use the memory context above to give informed, accurate responses.
+- If the user asks about past actions, refer to the RECENT ACTIONS section.
+- If the user asks to "modify" a file, use 'modify_content' action.
+
+When generating markdown content:
+- Use '-' for bullet lists, '##' for headings
+- Bold important words with '**'
+- Always return clean markdown content.
+
+JSON format:
+[
+    {
+        "action": "create_file | create_folder | delete_file | rename_file | list_files | answer | modify_content",
+        "path": "file path",
+        "content": "content",
+        "message": "response to user"
+    }
+]
+
+It can be more than one action, simply return more than one json in the list.
+"""
+
+    return prompt
+
+
+def _parse_response(raw: str) -> list:
+    """Parse the LLM response into a list of action dicts."""
+
+    # Remove markdown code blocks
     if raw.startswith("```"):
         raw = raw.replace("```json", "").replace("```", "").strip()
 
-    # fix wrapped string
+    # Fix wrapped string
     if raw.startswith('"') and raw.endswith('"'):
         raw = raw[1:-1]
 
-    # TRY JSON
+    # Try JSON first
     try:
         return json.loads(raw)
-    except:
-        try:
-            # fallback: handle Python-like list
-            return ast.literal_eval(raw)
-        except:
-            return [{
-                "action": "answer",
-                "message": raw
-        }]
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # Fallback: Python literal
+    try:
+        return ast.literal_eval(raw)
+    except (ValueError, SyntaxError):
+        pass
+
+    # Last resort: return as answer
+    return [{"action": "answer", "message": raw}]
