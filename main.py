@@ -1,4 +1,5 @@
 from fastapi import FastAPI , WebSocket
+from fastapi.responses import FileResponse
 from contextlib import asynccontextmanager
 from middleware.errorsMiddleWare import globalErrorHandler
 from routes.auth import router as auth_router
@@ -41,6 +42,12 @@ app.add_middleware(
 app.include_router(auth_router, prefix="/api/v1/auth")
 app.include_router(files_router, prefix="/api/v1/files")
 app.include_router(chat_router, prefix="/api/v2/chat")
+
+
+@app.get("/stream")
+async def stream_page():
+    return FileResponse("stream.html")
+
 
 @app.websocket("/ws")
 async def ws_endpoint(websocket: WebSocket):

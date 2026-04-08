@@ -6,6 +6,7 @@ Upgraded with:
 - Conditional summarization (only for meaningful content)
 - Post-action reflection (only for important interactions)
 - Episodic logging (always — cheap SQLite)
+- SSE streaming endpoint for real-time token delivery
 """
 
 from memory.store import add_semantic, delete_semantic
@@ -13,11 +14,14 @@ from memory.models import SemanticEntry
 from services.summarizer import summarize_content, should_summarize
 from services.reflection import reflect
 from fastapi import APIRouter, HTTPException
-from services.aiServices import askAI
+from fastapi.responses import StreamingResponse
+from services.aiServices import askAI, askAI_stream
 from pathlib import Path
 import shutil
+import json
 
 router = APIRouter()
+
 
 BASE_PATH = Path("workspace")
 
@@ -97,6 +101,31 @@ async def chat_handler(body: dict):
             {"role": "assistant", "content": str(response)}
         ]
     }
+
+
+# ------------------ STREAMING CHAT ------------------
+@router.post("/stream")
+async def chat_stream_handler(body: dict):
+    """SSE streaming endpoint — tokens arrive in real-time."""
+    message = body.get("message")
+    history = body.get("history", [])
+
+    if not message:
+        raise HTTPException(status_code=420, detail="Message is required")
+
+    async def event_generator():
+        async for event in askAI_stream(message, history):
+            yield event  # 🔥 DO NOT TOUCH IT
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        }
+    )
 
 
 # ==================== ACTION HANDLERS ====================
