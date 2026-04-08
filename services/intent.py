@@ -4,6 +4,7 @@ Uses OpenRouter (dedicated API key) for lightweight classification.
 Determines whether memory lookup is even needed.
 """
 
+import time
 from openai import OpenAI
 from memory.cache import cache, content_hash
 
@@ -28,23 +29,17 @@ INTENT_CONFIG = {
 REFLECTION_INTENTS = {"modify", "search", "question"}
 
 
-async def detect_intent(message: str) -> dict:
+async def detect_intent(message: str) -> tuple[dict, float]:
     """
     Classify user message into an intent.
-
-    Returns:
-        {
-            "intent": str,
-            "needs_semantic": bool,
-            "needs_episodic": bool,
-            "needs_reflection": bool
-        }
+    Returns (result_dict, time_taken).
     """
+    start_time = time.time()
     # Check cache — same message = same intent
     cache_key = content_hash(message)
     cached = cache.get("intent", cache_key)
     if cached is not None:
-        return cached
+        return cached, time.time() - start_time
 
     prompt = """Classify this user message into exactly ONE intent. 
 Reply with ONLY the intent word, nothing else.
@@ -92,4 +87,5 @@ User message: """
     # Cache for 30 min — same message rarely changes intent
     cache.set("intent", cache_key, result, ttl_minutes=30)
 
-    return result
+    time_taken = time.time() - start_time
+    return result, time_taken

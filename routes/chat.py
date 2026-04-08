@@ -35,7 +35,10 @@ async def chat_handler(body: dict):
         )
 
     # 1. AI reasoning (includes intent detection + context building)
-    response, intent_result = await askAI(message, history)
+    response, intent_result, metrics, final_prompt = await askAI(message, history)
+
+    # Initialize summarizer metric (will be updated if called)
+    metrics["summarizer"] = {"time": 0, "called": False}
 
     # 2. Standardize to a list of action objects
     if isinstance(response, list):
@@ -55,7 +58,7 @@ async def chat_handler(body: dict):
         action = item.get("action")
 
         if action == "create_file":
-            await _handle_create_file(item)
+            await _handle_create_file(item, metrics)
 
         elif action == "create_folder":
             await _handle_create_folder(item)
@@ -70,7 +73,7 @@ async def chat_handler(body: dict):
             await _handle_list_files(item)
 
         elif action == "modify_content":
-            await _handle_modify_content(item)
+            await _handle_modify_content(item, metrics)
 
         elif action == "answer":
             pass  # No filesystem action needed
@@ -87,6 +90,8 @@ async def chat_handler(body: dict):
         "message": "Chat",
         "data": response,
         "intent": intent_result.get("intent", "unknown"),
+        "metrics": metrics,
+        "final_prompt": final_prompt,
         "updated_history": history + [
             {"role": "user", "content": message},
             {"role": "assistant", "content": str(response)}
@@ -96,7 +101,7 @@ async def chat_handler(body: dict):
 
 # ==================== ACTION HANDLERS ====================
 
-async def _handle_create_file(item: dict):
+async def _handle_create_file(item: dict, metrics: dict):
     """Create a file and store in semantic memory with optional summarization."""
     path = item.get("path")
     if not path:
@@ -119,7 +124,8 @@ async def _handle_create_file(item: dict):
     # Store in semantic memory
     # Summarize ONLY if content is worth it (avoid LLM call for tiny files)
     if content and should_summarize(content):
-        summary_data = await summarize_content(content, path)
+        summary_data, s_time = await summarize_content(content, path)
+        metrics["summarizer"] = {"time": round(s_time, 3), "called": True}
         entry = SemanticEntry(
             type="file_knowledge",
             path=path,
@@ -234,7 +240,7 @@ async def _handle_list_files(item: dict):
     })
 
 
-async def _handle_modify_content(item: dict):
+async def _handle_modify_content(item: dict, metrics: dict):
     """Modify file content and update semantic memory with optional re-summarization."""
     path = item.get("path")
     content = item.get("content")
@@ -253,7 +259,8 @@ async def _handle_modify_content(item: dict):
 
     # Update semantic memory — re-summarize if content is substantial
     if should_summarize(content):
-        summary_data = await summarize_content(content, path)
+        summary_data, s_time = await summarize_content(content, path)
+        metrics["summarizer"] = {"time": round(s_time, 3), "called": True}
         entry = SemanticEntry(
             type="file_knowledge",
             path=path,

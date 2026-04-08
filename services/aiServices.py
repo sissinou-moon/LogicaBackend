@@ -8,63 +8,72 @@ Intent detection handled by intent.py (separate API key).
 
 from services.intent import detect_intent
 from services.context_builder import build_context
+import time
+import httpx
 import json
 import ast
-from openai import OpenAI
 
-# MiMo-V2-Flash — primary reasoning model (HuggingFace)
-client = OpenAI(
-    base_url="https://router.huggingface.co/v1",
-    api_key="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",
+# Persistent httpx client — reuses TCP connection to Ollama (no reconnect overhead)
+ollama_client = httpx.AsyncClient(
+    base_url="http://localhost:11434",
+    timeout=httpx.Timeout(300.0, connect=10.0),  # 5 min read, 10s connect
 )
-
 
 async def askAI(message: str, history: list = []):
     """
     Main AI reasoning function.
-
-    Flow:
-    1. Detect intent (lightweight, cached)
-    2. Build structured context based on intent (only queries memory if needed)
-    3. Inject context into system prompt
-    4. Call MiMo-V2-Flash for reasoning
-    5. Return structured actions + intent_result for downstream use
-
-    Returns:
-        tuple: (actions_list, intent_result_dict)
+    Returns (actions, intent_result, metrics, prompt).
     """
+    metrics = {}
+    
+    # 1. Intent Detection
+    intent_result, intent_time = await detect_intent(message)
+    metrics["intent"] = {"time": round(intent_time, 3), "called": True}
 
-    # 1. Intent Detection (OpenRouter — cheap, cached)
-    intent_result = await detect_intent(message)
-
-    # 2. Build Context (only queries memory layers that intent says are needed)
+    # 2. Build Context
     knowledge_context = await build_context(intent_result, message)
 
-    # 3. Build System Prompt with structured context
+    # 3. Build System Prompt
     prompt = _build_system_prompt(knowledge_context, intent_result)
 
-    # 4. Build message list with history
+    # 4. Build message list
     messages = [{"role": "system", "content": prompt}]
-
-    # Add previous chat history (Short-term / Working memory)
     for msg in history:
         messages.append(msg)
-
-    # Add current user message
     messages.append({"role": "user", "content": message})
 
-    # 5. Call MiMo-V2-Flash for final reasoning
-    completion = client.chat.completions.create(
-        model="XiaomiMiMo/MiMo-V2-Flash:novita",
-        messages=messages,
-    )
+    #if intent_result.get("intent") == "question" and len(message) < 20:
+    #    messages = [{"role": "user", "content": message}]
 
-    raw = completion.choices[0].message.content.strip()
+    # 5. Call reasoning model via persistent httpx client
+    reasoning_start = time.time()
+    try:
+        response = await ollama_client.post(
+            "/api/chat",
+            json={
+                "model": "deepseek-r1:8b",
+                "messages": messages,
+                "stream": False,
+                "keep_alive": "30m"  # keep model loaded in GPU for 30 min
+            },
+        )
+        response.raise_for_status()
+        result = response.json()
+        raw = result.get("message", {}).get("content", "").strip()
+    except Exception as e:
+        import traceback
+        error_detail = f"{type(e).__name__}: {str(e)}"
+        print(f"❌ LLM ERROR: {error_detail}")
+        traceback.print_exc()
+        raw = f"[Error calling local AI: {error_detail}]"
+    
+    reasoning_time = time.time() - reasoning_start
+    metrics["reasoning"] = {"time": round(reasoning_time, 3), "called": True}
 
     # Clean response
     actions = _parse_response(raw)
 
-    return actions, intent_result
+    return actions, intent_result, metrics, prompt
 
 
 def _build_system_prompt(knowledge_context: str, intent_result: dict) -> str:
@@ -73,10 +82,10 @@ def _build_system_prompt(knowledge_context: str, intent_result: dict) -> str:
     intent = intent_result.get("intent", "question")
 
     # Base instruction
-    prompt = """You are an AI file manager with memory and learning capabilities.
-
-Always respond ONLY with valid JSON.
-
+    prompt = """
+    You are an AI file manager.
+Return ONLY valid JSON.
+Keep responses short and correct.
 """
 
     # Inject structured context (only if we have any)

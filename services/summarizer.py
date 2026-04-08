@@ -9,6 +9,7 @@ NOT called for every file — only when:
 """
 
 import json
+import time
 from openai import OpenAI
 from memory.cache import cache, content_hash
 
@@ -22,31 +23,25 @@ summary_client = OpenAI(
 MIN_CONTENT_LENGTH = 50
 
 
-async def summarize_content(content: str, path: str) -> dict:
+async def summarize_content(content: str, path: str) -> tuple[dict, float]:
     """
     Generate a structured summary of file content.
-
-    Returns:
-        {
-            "summary": "2-line description of what this file contains",
-            "keywords": ["keyword1", "keyword2", ...]
-        }
-
-    If content is too short or summarization fails, returns a simple fallback.
+    Returns (result_dict, time_taken).
     """
+    start_time = time.time()
     # Skip tiny content — not worth an API call
     if len(content.strip()) < MIN_CONTENT_LENGTH:
         return {
             "summary": f"Short file at {path}",
             "keywords": _extract_simple_keywords(content, path)
-        }
+        }, time.time() - start_time
 
     # Check cache — same content = same summary
     c_hash = content_hash(content)
     cache_key = f"{path}:{c_hash}"
     cached = cache.get("summary", cache_key)
     if cached is not None:
-        return cached
+        return cached, time.time() - start_time
 
     prompt = """Analyze this file content and return a JSON object with:
 1. "summary": A concise 2-line summary of what this file contains and its purpose.
@@ -63,7 +58,7 @@ Example:
             model="google/gemini-2.0-flash-lite-001",
             messages=[
                 {"role": "system", "content": prompt},
-                {"role": "user", "content": f"File path: {path}\n\nContent:\n{content[:2000]}"}
+                {"role": "user", "content": f"File path: {path}\n\nContent:\n{content[:500]}"}
             ],
             max_tokens=200,
             temperature=0.0,
@@ -93,7 +88,8 @@ Example:
     # Cache for 2 hours — summaries rarely change for same content
     cache.set("summary", cache_key, result, ttl_minutes=120)
 
-    return result
+    time_taken = time.time() - start_time
+    return result, time_taken
 
 
 def _extract_simple_keywords(content: str, path: str) -> list[str]:

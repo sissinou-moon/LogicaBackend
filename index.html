@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Live Microphone Streaming</title>
+</head>
+
+<body>
+
+    <h2>Mic Streaming Test</h2>
+    <button onclick="start()">Start WebSocket</button>
+    <button onclick="startMic()">Start Mic</button>
+
+    <h3>Final:</h3>
+    <div id="final"></div>
+
+    <h3>Live:</h3>
+    <div id="partial" style="color: gray;"></div>
+
+    <script>
+        let ws;
+        let audioContext;
+        let processor;
+        let source;
+
+        function start() {
+            ws = new WebSocket("ws://127.0.0.1:8000/ws");
+
+            ws.onopen = () => console.log("✅ Connected");
+            ws.onmessage = (e) => {
+                const msg = e.data;
+
+                if (msg.startsWith("PARTIAL:")) {
+                    document.getElementById("partial").innerText = msg.replace("PARTIAL:", "");
+                }
+
+                if (msg.startsWith("FINAL:")) {
+                    const finalText = msg.replace("FINAL:", "");
+
+                    document.getElementById("final").innerHTML += `<p>${finalText}</p>`;
+                    document.getElementById("partial").innerText = "";
+                }
+            };
+            ws.onclose = () => console.log("❌ Disconnected");
+        }
+
+        async function startMic() {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+            audioContext = new AudioContext({ sampleRate: 16000 });
+            source = audioContext.createMediaStreamSource(stream);
+
+            processor = audioContext.createScriptProcessor(4096, 1, 1);
+
+            processor.onaudioprocess = (e) => {
+                const input = e.inputBuffer.getChannelData(0); // Float32 PCM
+
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(input.buffer); // send raw float32
+                }
+            };
+
+            source.connect(processor);
+            processor.connect(audioContext.destination);
+
+            console.log("🎤 Mic streaming started (PCM)");
+        }
+    </script>
+
+</body>
+
+</html>
