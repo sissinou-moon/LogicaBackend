@@ -2,7 +2,6 @@
 Upgraded transcription backend:
 - Live mic streaming via WebSocket (VAD + chunking)
 - MP3/audio file upload + transcription
-- Speaker diarization via pyannote.audio
 - Faster-whisper for speed + quality
 """
 
@@ -14,36 +13,17 @@ import numpy as np
 import tempfile
 import os
 import json
-import time
-import warnings
-from pathlib import Path
+from routes.auth import router as auth_router
+from routes.files import router as files_router
+from routes.chat import router as chat_router
 
 # ── Faster-whisper (much faster than openai-whisper, same quality) ──────────
 from faster_whisper import WhisperModel
 
-# ── Speaker diarization ──────────────────────────────────────────────────────
-# pip install pyannote.audio
-# Requires HuggingFace token + accepting model terms at:
-# https://huggingface.co/pyannote/speaker-diarization-3.1
-warnings.filterwarnings(
-    "ignore",
-    message=r"torchcodec is not installed correctly so built-in audio decoding will fail\..*",
-    category=UserWarning,
-    module=r"pyannote\.audio\.core\.io",
-)
-from pyannote.audio import Pipeline
 import torch
 import soundfile as sf
-from dotenv import load_dotenv
 
-BASE_DIR = Path(__file__).resolve().parent
-load_dotenv(dotenv_path=BASE_DIR / ".env")
-HF_TOKEN = os.getenv("HF_TOKEN")
-HUGGINGFACE_HUB_TOKEN = os.getenv("HUGGINGFACE_HUB_TOKEN")
 WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "auto").strip().lower()
-if HF_TOKEN and not HUGGINGFACE_HUB_TOKEN:
-    # Keep tooling compatible with libs that read only this alias.
-    os.environ["HUGGINGFACE_HUB_TOKEN"] = HF_TOKEN
 
 FFMPEG_BIN = r"C:\ffmpeg\bin"
 if hasattr(os, "add_dll_directory") and os.path.isdir(FFMPEG_BIN):
@@ -53,7 +33,6 @@ SAMPLE_RATE = 16000
 CHUNK_DURATION = 2          # seconds per live chunk (shorter = more responsive)
 CHUNK_SIZE = SAMPLE_RATE * CHUNK_DURATION
 SILENCE_THRESHOLD = 0.01    # RMS below this = silence, skip processing
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -78,25 +57,13 @@ async def lifespan(app: FastAPI):
     )
     print("✅ Whisper loaded")
 
-    print("⏳ Loading diarization pipeline...")
-    try:
-        if not HF_TOKEN:
-            print("⚠️  HF_TOKEN not found in environment; diarization may fail.")
-        app.state.diarize = Pipeline.from_pretrained(
-            "pyannote/speaker-diarization-3.1",
-            use_auth_token=HF_TOKEN,
-        )
-        if use_cuda:
-            app.state.diarize = app.state.diarize.to(torch.device("cuda"))
-        print("✅ Diarization loaded")
-    except Exception as e:
-        print(f"⚠️  Diarization unavailable: {e}. Set HF_TOKEN env var.")
-        app.state.diarize = None
-
     yield
 
 
 app = FastAPI(lifespan=lifespan)
+app.include_router(auth_router, prefix="/api/v1/auth")
+app.include_router(files_router, prefix="/api/v1/files")
+app.include_router(chat_router, prefix="/api/v2/chat")
 
 app.add_middleware(
     CORSMiddleware,
@@ -126,41 +93,13 @@ def transcribe_audio(model, audio_path: str, language: str = None):
     return list(segments), info
 
 
-def diarize_audio(pipeline, audio_path: str):
-    """Return speaker turn dict: {(start, end): speaker_label}"""
-    if pipeline is None:
-        return {}
-    # Preload audio in-memory so pyannote does not depend on torchcodec.
-    waveform, sample_rate = sf.read(audio_path, dtype="float32", always_2d=True)
-    waveform = torch.from_numpy(waveform.T)  # (channels, time)
-    diarization = pipeline({"waveform": waveform, "sample_rate": int(sample_rate)})
-    turns = {}
-    for turn, _, speaker in diarization.itertracks(yield_label=True):
-        turns[(turn.start, turn.end)] = speaker
-    return turns
-
-
-def assign_speaker(start: float, end: float, turns: dict) -> str:
-    """Find the speaker with most overlap for this segment."""
-    best_speaker = "Unknown"
-    best_overlap = 0.0
-    for (t_start, t_end), speaker in turns.items():
-        overlap = max(0, min(end, t_end) - max(start, t_start))
-        if overlap > best_overlap:
-            best_overlap = overlap
-            best_speaker = speaker
-    return best_speaker
-
-
-def merge_segments(segments, turns: dict):
-    """Combine whisper segments with speaker labels."""
+def segments_to_response(segments):
+    """Convert whisper segments to API response shape."""
     result = []
     for seg in segments:
-        speaker = assign_speaker(seg.start, seg.end, turns)
         result.append({
             "start": round(seg.start, 2),
             "end": round(seg.end, 2),
-            "speaker": speaker,
             "text": seg.text.strip(),
         })
     return result
@@ -170,7 +109,7 @@ def merge_segments(segments, turns: dict):
 
 @app.post("/api/v2/transcribe")
 async def transcribe_file(file: UploadFile = File(...)):
-    """Upload any audio file, get back diarized transcript."""
+    """Upload audio file, get back transcription."""
     suffix = os.path.splitext(file.filename)[-1] or ".mp3"
 
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
@@ -179,8 +118,7 @@ async def transcribe_file(file: UploadFile = File(...)):
 
     try:
         segments, info = transcribe_audio(app.state.whisper, tmp_path)
-        turns = diarize_audio(app.state.diarize, tmp_path)
-        merged = merge_segments(segments, turns)
+        merged = segments_to_response(segments)
 
         return JSONResponse({
             "language": info.language,
