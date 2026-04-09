@@ -13,6 +13,7 @@ from memory.store import add_semantic, delete_semantic
 from memory.models import SemanticEntry
 from services.summarizer import summarize_content, should_summarize
 from services.reflection import reflect
+from services.intent import detect_intent
 from fastapi import APIRouter, HTTPException, Body, Query
 from fastapi.responses import StreamingResponse
 from services.aiServices import askAI, askAI_stream
@@ -106,8 +107,25 @@ async def chat_handler(body: dict):
 # ------------------ STREAMING CHAT ------------------
 
 async def generate_ollama_stream(user_prompt: str, history: list | None = None):
-    async for data in askAI_stream(user_prompt, history or []):
-        yield f"data: {json.dumps(data)}\n\n"
+    history = history or []
+    intent_result, _ = await detect_intent(user_prompt)
+    full_answer = ""
+
+    try:
+        async for data in askAI_stream(user_prompt, history, intent_result=intent_result):
+            full_answer += data.get("content", "")
+            yield f"data: {json.dumps(data)}\n\n"
+    finally:
+        # Persist streamed interaction to memory just like the non-stream route.
+        # Episodic memory is always logged; semantic memory is conditional in reflect().
+        try:
+            streamed_action = [{
+                "action": "answer",
+                "message": full_answer.strip()
+            }]
+            await reflect(user_prompt, streamed_action, intent_result)
+        except Exception:
+            pass
 
 
 @router.post("/stream")

@@ -76,7 +76,11 @@ async def askAI(message: str, history: list = []):
     return actions, intent_result, metrics, prompt
 
 
-async def askAI_stream(message: str, history: list | None = None) -> AsyncGenerator[dict, None]:
+async def askAI_stream(
+    message: str,
+    history: list | None = None,
+    intent_result: dict | None = None
+) -> AsyncGenerator[dict, None]:
     """
     Memory-aware streaming chat.
     Yields chunks as {"thought": "...", "content": "..."}.
@@ -84,7 +88,8 @@ async def askAI_stream(message: str, history: list | None = None) -> AsyncGenera
     history = history or []
 
     # Reuse the same memory pipeline as non-streaming chat
-    intent_result, _ = await detect_intent(message)
+    if intent_result is None:
+        intent_result, _ = await detect_intent(message)
     knowledge_context = await build_context(intent_result, message)
     prompt = _build_system_prompt(knowledge_context, intent_result)
 
