@@ -272,7 +272,7 @@
         <div id="input-row">
             <textarea id="prompt-input" rows="1"
                 placeholder="Type a message… (Enter to send, Shift+Enter for newline)"></textarea>
-            <button id="send-btn">Send</button>
+            <button id="send-btn" type="button">Send</button>
         </div>
     </div>
 
@@ -281,6 +281,7 @@
         const inputEl = document.getElementById('prompt-input');
         const sendBtn = document.getElementById('send-btn');
         const apiUrlEl = document.getElementById('api-url');
+        let isSending = false;
 
         function scrollBottom() {
             messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -335,9 +336,11 @@
         }
 
         async function sendMessage() {
+            if (isSending) return;
             const prompt = inputEl.value.trim();
             if (!prompt) return;
 
+            isSending = true;
             inputEl.value = '';
             inputEl.style.height = 'auto';
             sendBtn.disabled = true;
@@ -396,9 +399,13 @@
             }
             sendBtn.disabled = false;
             inputEl.focus();
+            isSending = false;
         }
 
         sendBtn.addEventListener('click', sendMessage);
+
+        // Safety: prevent accidental form-submit reload if page is embedded/wrapped in a form.
+        document.addEventListener('submit', e => e.preventDefault());
 
         inputEl.addEventListener('keydown', e => {
             if (e.key === 'Enter' && !e.shiftKey) {

@@ -1,72 +1,498 @@
 <!DOCTYPE html>
-<html>
-
+<html lang="en">
 <head>
-    <title>Live Microphone Streaming</title>
-</head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>VoiceScribe</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: #12121a;
+    --surface2: #1a1a26;
+    --border: #2a2a3d;
+    --accent: #7c6dfa;
+    --accent2: #fa6d8f;
+    --green: #4dffa0;
+    --text: #e8e8f0;
+    --muted: #6b6b8a;
+    --mono: 'JetBrains Mono', monospace;
+    --sans: 'Syne', sans-serif;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow-x: hidden;
+  }
+
+  body::after {
+    content: '';
+    position: fixed;
+    width: 700px; height: 700px;
+    background: radial-gradient(circle, rgba(124,109,250,0.07) 0%, transparent 70%);
+    top: -200px; left: -150px;
+    pointer-events: none; z-index: 0;
+  }
+
+  header {
+    position: relative; z-index: 2;
+    padding: 22px 36px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+
+  .logo { font-size: 22px; font-weight: 800; letter-spacing: -1px; }
+  .logo span { color: var(--accent); }
+
+  .ws-cfg {
+    margin-left: auto;
+    display: flex; align-items: center; gap: 10px;
+  }
+
+  .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--muted); flex-shrink: 0;
+    transition: background 0.3s, box-shadow 0.3s;
+  }
+  .dot.on  { background: var(--green); box-shadow: 0 0 8px var(--green); }
+  .dot.err { background: var(--accent2); }
+
+  .ws-cfg input {
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 6px 11px;
+    font-family: var(--mono); font-size: 11px;
+    color: var(--muted); width: 230px; outline: none;
+  }
+  .ws-cfg input:focus { border-color: var(--accent); color: var(--text); }
+
+  main {
+    position: relative; z-index: 1;
+    flex: 1; display: grid;
+    grid-template-columns: 300px 1fr;
+    overflow: hidden; height: calc(100vh - 69px);
+  }
+
+  /* ── Left ── */
+  .left {
+    border-right: 1px solid var(--border);
+    padding: 22px 20px;
+    display: flex; flex-direction: column; gap: 18px;
+    overflow-y: auto;
+  }
+
+  .lbl {
+    font-size: 10px; font-weight: 700;
+    letter-spacing: 2px; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 8px;
+  }
+
+  .tabs {
+    display: flex; background: var(--surface);
+    border: 1px solid var(--border); border-radius: 10px; padding: 3px;
+  }
+  .tab {
+    flex: 1; padding: 8px 0; text-align: center;
+    font-size: 13px; font-weight: 600; border-radius: 8px;
+    cursor: pointer; color: var(--muted); transition: all 0.2s;
+    user-select: none;
+  }
+  .tab.on { background: var(--accent); color: #fff; }
+
+  .pane { display: flex; flex-direction: column; gap: 12px; }
+  .pane.hidden { display: none; }
+
+  .btn {
+    width: 100%; padding: 13px; border-radius: 11px; border: none;
+    font-family: var(--sans); font-size: 13px; font-weight: 700;
+    cursor: pointer; display: flex; align-items: center;
+    justify-content: center; gap: 8px; transition: all 0.18s;
+  }
+  .btn-a { background: var(--accent); color: #fff; }
+  .btn-a:hover { background: #6b5ee8; transform: translateY(-1px); }
+  .btn-a:disabled { opacity: 0.3; cursor: default; transform: none; }
+  .btn-d { background: transparent; border: 1px solid var(--accent2) !important; color: var(--accent2); }
+  .btn-d:hover { background: rgba(250,109,143,0.08); }
+  .btn-s { background: var(--surface2); border: 1px solid var(--border); color: var(--text); }
+  .btn-s:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* waveform */
+  .wave-box {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px; height: 68px;
+    display: flex; align-items: center;
+  }
+  canvas#wv { width: 100%; height: 48px; display: block; }
+
+  /* drop zone */
+  .drop {
+    border: 1.5px dashed var(--border); border-radius: 12px;
+    padding: 24px 14px; text-align: center; cursor: pointer;
+    background: var(--surface); transition: all 0.2s;
+  }
+  .drop:hover, .drop.over { border-color: var(--accent); background: rgba(124,109,250,0.05); }
+  .drop .di { font-size: 26px; margin-bottom: 6px; }
+  .drop p { font-size: 12px; color: var(--muted); line-height: 1.55; }
+  .drop p strong { color: var(--text); }
+
+  .fprev {
+    display: none; align-items: center; gap: 10px;
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 9px; padding: 9px 13px; font-size: 12px;
+  }
+  .fprev.on { display: flex; }
+  .fname { font-family: var(--mono); font-size: 10px; color: var(--muted); word-break: break-all; }
+
+  .prog { display: none; flex-direction: column; gap: 5px; }
+  .prog.on { display: flex; }
+  .prog-bg { height: 4px; background: var(--surface2); border-radius: 4px; overflow: hidden; }
+  .prog-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2)); border-radius: 4px; width: 0%; transition: width 0.3s; }
+  .prog-lbl { font-size: 11px; color: var(--muted); font-family: var(--mono); }
+
+  /* speaker legend */
+  .sp-list { display: flex; flex-direction: column; gap: 5px; }
+  .sp-chip {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 10px; background: var(--surface2);
+    border: 1px solid var(--border); border-radius: 8px;
+    font-size: 12px; font-weight: 600;
+  }
+  .sp-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+
+  /* ── Right ── */
+  .right { display: flex; flex-direction: column; overflow: hidden; }
+
+  .t-head {
+    padding: 16px 26px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .t-head h2 { font-size: 13px; font-weight: 700; letter-spacing: 1px; color: var(--muted); }
+
+  .t-actions { display: flex; gap: 7px; align-items: center; }
+
+  .live-badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    background: rgba(77,255,160,0.1); border: 1px solid rgba(77,255,160,0.25);
+    color: var(--green); font-size: 10px; font-weight: 700;
+    padding: 3px 9px; border-radius: 20px; letter-spacing: 1px;
+  }
+  .lp { width: 5px; height: 5px; border-radius: 50%; background: var(--green); animation: pl 1.2s ease-in-out infinite; }
+  @keyframes pl { 0%,100%{transform:scale(1);opacity:1} 50%{transform:scale(1.6);opacity:0.4} }
+
+  .ibtn {
+    background: transparent; border: 1px solid var(--border);
+    border-radius: 7px; padding: 5px 11px; color: var(--muted);
+    font-size: 11px; font-family: var(--sans); cursor: pointer; transition: all 0.18s;
+  }
+  .ibtn:hover { border-color: var(--accent); color: var(--accent); }
+
+  #tbox {
+    flex: 1; overflow-y: auto; padding: 20px 26px;
+    display: flex; flex-direction: column; gap: 0;
+  }
+
+  .empty {
+    margin: auto; text-align: center; color: var(--muted);
+  }
+  .empty .ei { font-size: 44px; margin-bottom: 12px; opacity: 0.35; }
+  .empty p { font-size: 14px; line-height: 1.7; }
+
+  .seg {
+    display: flex; gap: 14px; padding: 8px 10px;
+    border-radius: 10px; transition: background 0.15s;
+    animation: fs 0.28s ease;
+  }
+  @keyframes fs { from{opacity:0;transform:translateY(5px)} to{opacity:1;transform:none} }
+  .seg:hover { background: var(--surface2); }
+
+  .smeta {
+    flex-shrink: 0; display: flex; flex-direction: column;
+    align-items: flex-end; gap: 3px; min-width: 88px;
+  }
+  .ssp {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.4px;
+    padding: 2px 8px; border-radius: 20px;
+  }
+  .stime { font-family: var(--mono); font-size: 10px; color: var(--muted); }
+  .stxt { font-size: 15px; line-height: 1.68; padding-top: 1px; flex: 1; }
+
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+  @media (max-width: 700px) {
+    main { grid-template-columns: 1fr; grid-template-rows: auto 1fr; height: auto; }
+    .left { border-right: none; border-bottom: 1px solid var(--border); }
+    .ws-cfg { display: none; }
+  }
+</style>
+</head>
 <body>
 
-    <h2>Mic Streaming Test</h2>
-    <button onclick="start()">Start WebSocket</button>
-    <button onclick="startMic()">Start Mic</button>
+<header>
+  <div class="logo">VOICE<span>SCRIBE</span></div>
+  <div class="ws-cfg">
+    <div class="dot" id="wsdot"></div>
+    <input id="wsurl" type="text" value="ws://127.0.0.1:8000/ws" spellcheck="false" />
+  </div>
+</header>
 
-    <h3>Final:</h3>
-    <div id="final"></div>
+<main>
+  <div class="left">
 
-    <h3>Live:</h3>
-    <div id="partial" style="color: gray;"></div>
+    <div>
+      <div class="lbl">Mode</div>
+      <div class="tabs">
+        <div class="tab on" id="tl" onclick="sw('live')">🎤 Live</div>
+        <div class="tab" id="tf" onclick="sw('file')">📂 File</div>
+      </div>
+    </div>
 
-    <script>
-        let ws;
-        let audioContext;
-        let processor;
-        let source;
+    <!-- Live pane -->
+    <div class="pane" id="pl">
+      <div>
+        <div class="lbl">Connection</div>
+        <button class="btn btn-a" id="bconn" onclick="connWS()">⚡ Connect</button>
+      </div>
+      <button class="btn btn-a" id="bmic" onclick="toggleMic()" disabled>
+        <span id="mico">🎤</span><span id="mlbl">Start Mic</span>
+      </button>
+      <button class="btn btn-d" id="bstop" onclick="stopMic()" style="display:none">⏹ Stop</button>
+      <div>
+        <div class="lbl">Audio Level</div>
+        <div class="wave-box"><canvas id="wv"></canvas></div>
+      </div>
+    </div>
 
-        function start() {
-            ws = new WebSocket("ws://127.0.0.1:8000/ws");
+    <!-- File pane -->
+    <div class="pane hidden" id="pf">
+      <div>
+        <div class="lbl">Audio File</div>
+        <div class="drop" id="dz"
+             onclick="document.getElementById('fi').click()"
+             ondragover="dov(event)" ondragleave="dlv()" ondrop="ddr(event)">
+          <div class="di">📂</div>
+          <p><strong>Drop file here</strong> or click to browse<br><small>MP3 · WAV · M4A · OGG · FLAC</small></p>
+        </div>
+        <input type="file" id="fi" accept="audio/*" onchange="hfile(event)" style="display:none" />
+      </div>
+      <div class="fprev" id="fprev"><span style="font-size:18px">🎵</span><div class="fname" id="fn">—</div></div>
+      <div class="prog" id="prog">
+        <div class="prog-bg"><div class="prog-fill" id="pf2"></div></div>
+        <div class="prog-lbl" id="plbl">Processing…</div>
+      </div>
+      <button class="btn btn-a" id="btr" onclick="doTranscribe()" disabled>✨ Transcribe</button>
+    </div>
 
-            ws.onopen = () => console.log("✅ Connected");
-            ws.onmessage = (e) => {
-                const msg = e.data;
+    <!-- Speakers -->
+    <div id="spsec" style="display:none">
+      <div class="lbl">Speakers</div>
+      <div class="sp-list" id="splist"></div>
+    </div>
 
-                if (msg.startsWith("PARTIAL:")) {
-                    document.getElementById("partial").innerText = msg.replace("PARTIAL:", "");
-                }
+  </div>
 
-                if (msg.startsWith("FINAL:")) {
-                    const finalText = msg.replace("FINAL:", "");
+  <div class="right">
+    <div class="t-head">
+      <h2>TRANSCRIPT</h2>
+      <div class="t-actions">
+        <div id="livebadge" style="display:none"><div class="live-badge"><div class="lp"></div>LIVE</div></div>
+        <button class="ibtn" onclick="copyT()">Copy</button>
+        <button class="ibtn" onclick="dlT()">Export .txt</button>
+        <button class="ibtn" onclick="clearT()">Clear</button>
+      </div>
+    </div>
+    <div id="tbox">
+      <div class="empty" id="emp">
+        <div class="ei">🎙️</div>
+        <p>Connect your mic for live transcription<br>or upload an audio file to begin.</p>
+      </div>
+    </div>
+  </div>
+</main>
 
-                    document.getElementById("final").innerHTML += `<p>${finalText}</p>`;
-                    document.getElementById("partial").innerText = "";
-                }
-            };
-            ws.onclose = () => console.log("❌ Disconnected");
-        }
+<script>
+let ws=null, actx=null, proc=null, src=null, anl=null, raf=null, mic=false;
+let file=null, segs=[];
 
-        async function startMic() {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+const COLORS=[
+  {bg:'rgba(124,109,250,0.15)',tx:'#a99eff',dot:'#7c6dfa'},
+  {bg:'rgba(250,109,143,0.15)',tx:'#ffa0bb',dot:'#fa6d8f'},
+  {bg:'rgba(77,255,160,0.15)', tx:'#4dffa0',dot:'#4dffa0'},
+  {bg:'rgba(255,200,77,0.15)', tx:'#ffd060',dot:'#ffc84d'},
+  {bg:'rgba(77,200,255,0.15)', tx:'#80d8ff',dot:'#4dc8ff'},
+];
+const cmap={}, spk=[];
 
-            audioContext = new AudioContext({ sampleRate: 16000 });
-            source = audioContext.createMediaStreamSource(stream);
+function color(name){
+  if(!cmap[name]){ cmap[name]=COLORS[spk.length%COLORS.length]; spk.push(name); updateLegend(); }
+  return cmap[name];
+}
 
-            processor = audioContext.createScriptProcessor(4096, 1, 1);
+function sw(m){
+  document.getElementById('tl').classList.toggle('on',m==='live');
+  document.getElementById('tf').classList.toggle('on',m==='file');
+  document.getElementById('pl').classList.toggle('hidden',m!=='live');
+  document.getElementById('pf').classList.toggle('hidden',m!=='file');
+}
 
-            processor.onaudioprocess = (e) => {
-                const input = e.inputBuffer.getChannelData(0); // Float32 PCM
+// ── WS ────────────────────────────────────────────────────────────────────────
+function connWS(){
+  if(ws&&ws.readyState===WebSocket.OPEN){ws.close();return;}
+  ws=new WebSocket(document.getElementById('wsurl').value.trim());
+  const d=document.getElementById('wsdot');
+  ws.onopen=()=>{
+    d.className='dot on';
+    document.getElementById('bconn').innerHTML='✓ Connected';
+    document.getElementById('bmic').disabled=false;
+  };
+  ws.onmessage=(e)=>{
+    try{
+      const m=JSON.parse(e.data);
+      if(m.type==='transcript') addSeg({speaker:m.speaker||'Live',text:m.text,start:null,end:null});
+    }catch{ addSeg({speaker:'Live',text:e.data,start:null,end:null}); }
+  };
+  ws.onclose=()=>{d.className='dot';document.getElementById('bconn').innerHTML='⚡ Connect';document.getElementById('bmic').disabled=true;stopMic();};
+  ws.onerror=()=>d.className='dot err';
+}
 
-                if (ws && ws.readyState === WebSocket.OPEN) {
-                    ws.send(input.buffer); // send raw float32
-                }
-            };
+// ── Mic ───────────────────────────────────────────────────────────────────────
+async function toggleMic(){
+  if(mic){stopMic();return;}
+  const stream=await navigator.mediaDevices.getUserMedia({audio:{sampleRate:16000,channelCount:1}});
+  actx=new AudioContext({sampleRate:16000});
+  src=actx.createMediaStreamSource(stream);
+  anl=actx.createAnalyser(); anl.fftSize=256;
+  proc=actx.createScriptProcessor(4096,1,1);
+  proc.onaudioprocess=(e)=>{
+    if(ws&&ws.readyState===WebSocket.OPEN) ws.send(e.inputBuffer.getChannelData(0).buffer);
+  };
+  src.connect(anl); src.connect(proc); proc.connect(actx.destination);
+  mic=true;
+  document.getElementById('mico').textContent='🔴';
+  document.getElementById('mlbl').textContent='Recording…';
+  document.getElementById('bstop').style.display='flex';
+  document.getElementById('livebadge').style.display='block';
+  drawWave();
+}
 
-            source.connect(processor);
-            processor.connect(audioContext.destination);
+function stopMic(){
+  proc&&proc.disconnect(); src&&src.disconnect(); actx&&actx.close();
+  raf&&cancelAnimationFrame(raf);
+  proc=src=actx=anl=raf=null; mic=false;
+  document.getElementById('mico').textContent='🎤';
+  document.getElementById('mlbl').textContent='Start Mic';
+  document.getElementById('bstop').style.display='none';
+  document.getElementById('livebadge').style.display='none';
+  const c=document.getElementById('wv'); c.getContext('2d').clearRect(0,0,c.width,c.height);
+}
 
-            console.log("🎤 Mic streaming started (PCM)");
-        }
-    </script>
+function drawWave(){
+  const cv=document.getElementById('wv'), cx=cv.getContext('2d');
+  cv.width=cv.offsetWidth*devicePixelRatio; cv.height=cv.offsetHeight*devicePixelRatio;
+  cx.scale(devicePixelRatio,devicePixelRatio);
+  const W=cv.offsetWidth,H=cv.offsetHeight;
+  (function draw(){
+    raf=requestAnimationFrame(draw);
+    const d=new Uint8Array(anl.frequencyBinCount);
+    anl.getByteTimeDomainData(d);
+    cx.clearRect(0,0,W,H);
+    cx.strokeStyle='#7c6dfa'; cx.lineWidth=1.5; cx.beginPath();
+    d.forEach((v,i)=>{
+      const x=i/d.length*W, y=((v/128)-1)*(H/2)+H/2;
+      i===0?cx.moveTo(x,y):cx.lineTo(x,y);
+    });
+    cx.stroke();
+  })();
+}
 
+// ── File ──────────────────────────────────────────────────────────────────────
+function dov(e){e.preventDefault();document.getElementById('dz').classList.add('over');}
+function dlv(){document.getElementById('dz').classList.remove('over');}
+function ddr(e){e.preventDefault();dlv();const f=e.dataTransfer.files[0];if(f)setF(f);}
+function hfile(e){if(e.target.files[0])setF(e.target.files[0]);}
+function setF(f){
+  file=f;
+  document.getElementById('fn').textContent=f.name;
+  document.getElementById('fprev').classList.add('on');
+  document.getElementById('btr').disabled=false;
+}
+
+async function doTranscribe(){
+  if(!file)return;
+  const base=document.getElementById('wsurl').value.replace(/^ws/,'http').replace('/ws','');
+  document.getElementById('btr').disabled=true;
+  const pg=document.getElementById('prog'), pf=document.getElementById('pf2'), pl=document.getElementById('plbl');
+  pg.classList.add('on'); pl.textContent='Uploading…';
+  let fp=0;
+  const iv=setInterval(()=>{ fp=Math.min(fp+Math.random()*7,88); pf.style.width=fp+'%'; },350);
+  try{
+    const fd=new FormData(); fd.append('file',file);
+    const r=await fetch(`${base}/api/v2/transcribe`,{method:'POST',body:fd});
+    if(!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d=await r.json();
+    clearInterval(iv); pf.style.width='100%';
+    pl.textContent=`Done · ${d.duration}s · ${(d.language||'').toUpperCase()}`;
+    clearT();
+    d.segments.forEach(s=>addSeg(s));
+  }catch(e){
+    clearInterval(iv); pl.textContent='Error: '+e.message;
+    pf.style.background='var(--accent2)';
+  }finally{ document.getElementById('btr').disabled=false; }
+}
+
+// ── Transcript ────────────────────────────────────────────────────────────────
+function addSeg(s){
+  document.getElementById('emp').style.display='none';
+  const c=color(s.speaker), b=document.getElementById('tbox');
+  const d=document.createElement('div'); d.className='seg';
+  d.innerHTML=`
+    <div class="smeta">
+      <span class="ssp" style="background:${c.bg};color:${c.tx}">${esc(s.speaker)}</span>
+      ${s.start!==null?`<span class="stime">${ft(s.start)} → ${ft(s.end)}</span>`:''}
+    </div>
+    <div class="stxt">${esc(s.text)}</div>`;
+  b.appendChild(d); b.scrollTop=b.scrollHeight;
+  segs.push(s);
+}
+
+function ft(s){ if(s===null)return''; const m=Math.floor(s/60),sc=Math.floor(s%60); return `${m}:${String(sc).padStart(2,'0')}`; }
+function esc(t){ return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function updateLegend(){
+  const s=document.getElementById('spsec'), l=document.getElementById('splist');
+  s.style.display='block'; l.innerHTML='';
+  for(const n of spk){
+    const c=cmap[n];
+    l.innerHTML+=`<div class="sp-chip"><div class="sp-dot" style="background:${c.dot}"></div><span style="color:${c.tx}">${esc(n)}</span></div>`;
+  }
+}
+
+function clearT(){
+  segs=[]; Object.keys(cmap).forEach(k=>delete cmap[k]); spk.length=0;
+  document.getElementById('tbox').innerHTML='<div class="empty" id="emp"><div class="ei">🎙️</div><p>Connect your mic for live transcription<br>or upload an audio file to begin.</p></div>';
+  document.getElementById('spsec').style.display='none';
+  document.getElementById('splist').innerHTML='';
+}
+
+function copyT(){
+  navigator.clipboard.writeText(segs.map(s=>`[${s.speaker}] ${s.text}`).join('\n'));
+}
+
+function dlT(){
+  const txt=segs.map(s=>s.start!==null?`[${ft(s.start)} → ${ft(s.end)}] ${s.speaker}: ${s.text}`:`[${s.speaker}]: ${s.text}`).join('\n');
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([txt],{type:'text/plain'}));
+  a.download='transcript.txt'; a.click();
+}
+</script>
 </body>
-
 </html>
