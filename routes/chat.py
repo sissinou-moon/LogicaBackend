@@ -13,7 +13,7 @@ from memory.store import add_semantic, delete_semantic
 from memory.models import SemanticEntry
 from services.summarizer import summarize_content, should_summarize
 from services.reflection import reflect
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Body, Query
 from fastapi.responses import StreamingResponse
 from services.aiServices import askAI, askAI_stream
 from pathlib import Path
@@ -104,27 +104,29 @@ async def chat_handler(body: dict):
 
 
 # ------------------ STREAMING CHAT ------------------
+
+async def generate_ollama_stream(user_prompt: str, history: list | None = None):
+    async for data in askAI_stream(user_prompt, history or []):
+        yield f"data: {json.dumps(data)}\n\n"
+
+
 @router.post("/stream")
-async def chat_stream_handler(body: dict):
-    """SSE streaming endpoint — tokens arrive in real-time."""
-    message = body.get("message")
-    history = body.get("history", [])
+async def stream_ai(
+    prompt: str | None = Query(default=None),
+    body: dict | None = Body(default=None)
+):
+    payload = body or {}
+    final_prompt = prompt or payload.get("message") or payload.get("prompt")
+    history = payload.get("history", [])
 
-    if not message:
-        raise HTTPException(status_code=420, detail="Message is required")
-
-    async def event_generator():
-        async for event in askAI_stream(message, history):
-            yield event  # 🔥 DO NOT TOUCH IT
+    if not final_prompt:
+        raise HTTPException(status_code=420, detail="Prompt/message is required")
+    if not isinstance(history, list):
+        history = []
 
     return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        }
+        generate_ollama_stream(final_prompt, history),
+        media_type="text/event-stream"
     )
 
 

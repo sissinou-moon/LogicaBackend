@@ -13,6 +13,7 @@ import httpx
 import json
 import ast
 import re
+from typing import AsyncGenerator
 
 # Persistent httpx client — reuses TCP connection to Ollama (no reconnect overhead)
 ollama_client = httpx.AsyncClient(
@@ -75,19 +76,21 @@ async def askAI(message: str, history: list = []):
     return actions, intent_result, metrics, prompt
 
 
-async def askAI_stream(message: str, history: list = []):
-    intent_result, intent_time = await detect_intent(message)
+async def askAI_stream(message: str, history: list | None = None) -> AsyncGenerator[dict, None]:
+    """
+    Memory-aware streaming chat.
+    Yields chunks as {"thought": "...", "content": "..."}.
+    """
+    history = history or []
 
-    yield f"data: {json.dumps({'type': 'status', 'step': 'intent', 'data': intent_result})}\n\n"
-
+    # Reuse the same memory pipeline as non-streaming chat
+    intent_result, _ = await detect_intent(message)
     knowledge_context = await build_context(intent_result, message)
-    prompt = _build_stream_prompt(knowledge_context, intent_result)
+    prompt = _build_system_prompt(knowledge_context, intent_result)
 
     messages = [{"role": "system", "content": prompt}]
-    messages += history
+    messages.extend(history)
     messages.append({"role": "user", "content": message})
-
-    full_response = ""
 
     try:
         async with ollama_client.stream(
@@ -97,78 +100,33 @@ async def askAI_stream(message: str, history: list = []):
                 "model": "deepseek-r1:8b",
                 "messages": messages,
                 "stream": True,
-                "temperature": 0.7,
-                "keep_alive": "30m"
-            }
+                "keep_alive": "30m",
+            },
         ) as response:
+            response.raise_for_status()
 
             async for line in response.aiter_lines():
                 if not line:
                     continue
 
-                chunk = json.loads(line)
-                token = chunk.get("message", {}).get("content", "")
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
 
-                if token:
-                    full_response += token
-                    yield f"data: {json.dumps({'type': 'token', 'token': token})}\n\n"
+                msg = payload.get("message", {}) or {}
+                thought = msg.get("thinking", "") or ""
+                content = msg.get("content", "") or ""
 
-                if chunk.get("done"):
+                if thought or content:
+                    yield {"thought": thought, "content": content}
+
+                if payload.get("done"):
                     break
-
     except Exception as e:
-        yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+        # Never crash SSE stream on backend issues
+        yield {"thought": "", "content": f"[Stream error: {type(e).__name__}: {e}]"}
 
-    yield f"data: {json.dumps({'type': 'done'})}\n\n"
-
-
-def _build_stream_prompt(knowledge_context: str, intent_result: dict) -> str:
-    """Build a natural prompt for streaming — lets DeepSeek-R1 think freely using its native tags."""
-
-    prompt = """You are an AI assistant.
-
-You MUST respond in this exact format:
-
-<think>
-Brief reasoning steps here (very short bullet points)
-</think>
-
-Answer:
-Final clear response to the user.
-
-Rules:
-- Always include <think> section
-- Keep reasoning short
-- Do not skip format
-- Do not skip thinking section
-
-IMPORTANT: Always output <think> section before answering.
-If you do not output <think>, your response is invalid.
-"""
-
-    if knowledge_context:
-        prompt += f"""
-Here is relevant context from your memory:
-{knowledge_context}
-
-Use this context to inform your response.
-"""
-
-    intent = intent_result.get("intent", "question")
-    intent_hints = {
-        "create": "The user wants to create files or folders.",
-        "modify": "The user wants to modify existing content.",
-        "delete": "The user wants to delete something.",
-        "search": "The user is searching for information.",
-        "question": "The user is asking a question.",
-        "list": "The user wants to see workspace contents.",
-        "recall": "The user wants to recall past actions.",
-    }
-
-    if intent in intent_hints:
-        prompt += f"\nContext: {intent_hints[intent]}\n"
-
-    return prompt
 
 
 def _build_system_prompt(knowledge_context: str, intent_result: dict) -> str:

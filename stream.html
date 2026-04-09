@@ -2,170 +2,416 @@
 <html lang="en">
 
 <head>
-    <meta charset="UTF-8">
-    <title>AI Chat</title>
-
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Deepseek Chat</title>
     <style>
-        body {
+        *,
+        *::before,
+        *::after {
+            box-sizing: border-box;
             margin: 0;
-            font-family: Arial;
-            background: #0d0d0d;
-            color: white;
+            padding: 0;
         }
 
-        #chat {
-            max-width: 800px;
-            margin: auto;
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background: #f5f5f0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 16px;
+        }
+
+        #chat-wrap {
+            display: flex;
+            flex-direction: column;
+            width: 100%;
+            max-width: 720px;
+            height: 90vh;
+            max-height: 760px;
+            background: #fff;
+            border-radius: 16px;
+            border: 1px solid #e5e5e0;
+            overflow: hidden;
+            box-shadow: 0 2px 16px rgba(0, 0, 0, 0.06);
+        }
+
+        #chat-header {
+            padding: 14px 20px;
+            border-bottom: 1px solid #e5e5e0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .model-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #22c27d;
+        }
+
+        #chat-header h1 {
+            font-size: 15px;
+            font-weight: 500;
+            color: #111;
+        }
+
+        #api-row {
+            padding: 8px 20px;
+            border-bottom: 1px solid #e5e5e0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        #api-row label {
+            font-size: 11px;
+            color: #888;
+            white-space: nowrap;
+        }
+
+        #api-url {
+            flex: 1;
+            padding: 5px 9px;
+            font-size: 12px;
+            font-family: "SF Mono", "Fira Code", monospace;
+            border: 1px solid #e0e0da;
+            border-radius: 8px;
+            background: #f9f9f6;
+            color: #333;
+            outline: none;
+        }
+
+        #api-url:focus {
+            border-color: #aaa;
+        }
+
+        #messages {
+            flex: 1;
+            overflow-y: auto;
             padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
         }
 
         .msg {
-            padding: 12px;
-            margin: 10px 0;
-            border-radius: 10px;
-            white-space: pre-wrap;
-        }
-
-        .user {
-            background: #1f3b5c;
-            text-align: right;
-        }
-
-        .ai {
-            background: #1a1a1a;
-        }
-
-        .think {
-            font-size: 13px;
-            color: #aaa;
-            border-left: 2px solid #555;
-            padding-left: 10px;
-            margin: 5px 0;
-            display: block;
-        }
-
-        .inputBox {
             display: flex;
-            margin-top: 20px;
+            flex-direction: column;
+            gap: 6px;
+            max-width: 80%;
         }
 
-        input {
-            flex: 1;
-            padding: 10px;
-            background: #1c1c1c;
-            border: none;
-            color: white;
+        .msg.user {
+            align-self: flex-end;
+            align-items: flex-end;
         }
 
-        button {
+        .msg.assistant {
+            align-self: flex-start;
+            align-items: flex-start;
+        }
+
+        .msg-label {
+            font-size: 11px;
+            color: #aaa;
+            padding: 0 4px;
+        }
+
+        .bubble {
             padding: 10px 15px;
-            background: #4ea1ff;
-            border: none;
-            color: white;
+            border-radius: 14px;
+            font-size: 14px;
+            line-height: 1.65;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .user .bubble {
+            background: #e8f0fe;
+            color: #1a56db;
+            border-bottom-right-radius: 4px;
+        }
+
+        .assistant .bubble {
+            background: #f4f4f0;
+            color: #111;
+            border-bottom-left-radius: 4px;
+        }
+
+        .bubble.error {
+            background: #fef2f2;
+            color: #b91c1c;
+        }
+
+        /* Thinking block */
+        .thought-block {
+            font-size: 12px;
+            color: #777;
+            background: #fafaf8;
+            border: 1px solid #e5e5e0;
+            border-left: 3px solid #d0d0c8;
+            border-radius: 6px;
+            padding: 6px 10px;
+            cursor: pointer;
+            user-select: none;
+            max-width: 100%;
+        }
+
+        .thought-header {
+            font-size: 11px;
+            color: #999;
+        }
+
+        .thought-body {
+            display: block;
+            /* Changed from none */
+            margin-top: 6px;
+            font-size: 12px;
+            line-height: 1.55;
+            color: #666;
+            white-space: pre-wrap;
+            max-height: 180px;
+            overflow-y: auto;
+        }
+
+        /* Add this to allow hiding it if clicked */
+        .thought-block.closed .thought-body {
+            display: none;
+        }
+
+        /* Cursor blink while streaming */
+        .streaming::after {
+            content: '▋';
+            animation: blink 0.7s step-end infinite;
+        }
+
+        @keyframes blink {
+            50% {
+                opacity: 0;
+            }
+        }
+
+        /* Input area */
+        #input-row {
+            display: flex;
+            gap: 10px;
+            padding: 14px 20px;
+            border-top: 1px solid #e5e5e0;
+            background: #fff;
+        }
+
+        #prompt-input {
+            flex: 1;
+            padding: 10px 13px;
+            font-size: 14px;
+            font-family: inherit;
+            border: 1px solid #ddd;
+            border-radius: 10px;
+            background: #f9f9f6;
+            color: #111;
+            resize: none;
+            outline: none;
+            line-height: 1.45;
+            max-height: 120px;
+            overflow-y: auto;
+        }
+
+        #prompt-input:focus {
+            border-color: #aaa;
+            background: #fff;
+        }
+
+        #send-btn {
+            padding: 10px 20px;
+            border-radius: 10px;
+            border: 1px solid #ddd;
+            background: #111;
+            color: #fff;
+            font-size: 14px;
+            font-family: inherit;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: opacity 0.15s;
+        }
+
+        #send-btn:hover {
+            opacity: 0.85;
+        }
+
+        #send-btn:disabled {
+            opacity: 0.35;
+            cursor: default;
         }
     </style>
 </head>
 
 <body>
 
-    <div id="chat"></div>
+    <div id="chat-wrap">
+        <div id="chat-header">
+            <div class="model-dot"></div>
+            <h1>deepseek-r1:8b</h1>
+        </div>
 
-    <div class="inputBox" style="max-width:800px;margin:auto;">
-        <input id="input" placeholder="Type..." />
-        <button onclick="send()">Send</button>
+        <div id="api-row">
+            <label>API endpoint</label>
+            <input id="api-url" type="text" value="http://localhost:8000/stream" spellcheck="false" />
+        </div>
+
+        <div id="messages">
+            <div class="msg assistant">
+                <span class="msg-label">deepseek-r1</span>
+                <div class="bubble">Hello! I'm ready to chat. Ask me anything.</div>
+            </div>
+        </div>
+
+        <div id="input-row">
+            <textarea id="prompt-input" rows="1"
+                placeholder="Type a message… (Enter to send, Shift+Enter for newline)"></textarea>
+            <button id="send-btn">Send</button>
+        </div>
     </div>
 
     <script>
-        const chat = document.getElementById("chat");
+        const messagesEl = document.getElementById('messages');
+        const inputEl = document.getElementById('prompt-input');
+        const sendBtn = document.getElementById('send-btn');
+        const apiUrlEl = document.getElementById('api-url');
 
-        async function stream(message) {
+        function scrollBottom() {
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
 
-            const res = await fetch("http://127.0.0.1:8000/api/v2/chat/stream", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ message, stream: true })
-            });
+        function addUserBubble(text) {
+            const wrap = document.createElement('div');
+            wrap.className = 'msg user';
+            const label = document.createElement('span');
+            label.className = 'msg-label';
+            label.textContent = 'you';
+            const bubble = document.createElement('div');
+            bubble.className = 'bubble';
+            bubble.textContent = text;
+            wrap.appendChild(label);
+            wrap.appendChild(bubble);
+            messagesEl.appendChild(wrap);
+            scrollBottom();
+        }
 
-            if (!res.body) {
-                console.error("No stream body");
-                return;
-            }
+        function createAssistantBubble() {
+            const wrap = document.createElement('div');
+            wrap.className = 'msg assistant';
 
-            const reader = res.body.getReader();
-            const decoder = new TextDecoder();
+            const label = document.createElement('span');
+            label.className = 'msg-label';
+            label.textContent = 'deepseek-r1';
 
-            let aiMsg = document.createElement("div");
-            aiMsg.className = "msg ai";
-            chat.appendChild(aiMsg);
+            /* Thinking collapsible block */
+            const thoughtBlock = document.createElement('div');
+            thoughtBlock.className = 'thought-block';
+            thoughtBlock.style.display = 'none';
+            const thoughtHeader = document.createElement('div');
+            thoughtHeader.className = 'thought-header';
+            thoughtHeader.textContent = 'thinking… (click to expand)';
+            const thoughtBody = document.createElement('div');
+            thoughtBody.className = 'thought-body';
+            thoughtBlock.appendChild(thoughtHeader);
+            thoughtBlock.appendChild(thoughtBody);
+            thoughtBlock.addEventListener('click', () => thoughtBlock.classList.toggle('open'));
 
-            let buffer = "";
+            const bubble = document.createElement('div');
+            bubble.className = 'bubble streaming';
 
-            while (true) {
-                const { value, done } = await reader.read();
-                if (done) break;
+            wrap.appendChild(label);
+            wrap.appendChild(thoughtBlock);
+            wrap.appendChild(bubble);
+            messagesEl.appendChild(wrap);
+            scrollBottom();
 
-                buffer += decoder.decode(value, { stream: true });
+            return { bubble, thoughtBlock, thoughtBody };
+        }
 
-                // 🔥 FIX: safer parsing (line-based instead of \n\n blocks)
-                let lines = buffer.split("\n");
-                buffer = lines.pop();
+        async function sendMessage() {
+            const prompt = inputEl.value.trim();
+            if (!prompt) return;
 
-                for (let line of lines) {
+            inputEl.value = '';
+            inputEl.style.height = 'auto';
+            sendBtn.disabled = true;
+            addUserBubble(prompt);
 
-                    line = line.trim();
-                    if (!line.startsWith("data:")) continue;
+            const { bubble, thoughtBlock, thoughtBody } = createAssistantBubble();
+            let contentAcc = '';
+            let thoughtAcc = '';
 
-                    let raw = line.replace("data: ", "").trim();
+            try {
+                const url = new URL(apiUrlEl.value.trim());
+                url.searchParams.set('prompt', prompt);
 
-                    if (!raw) continue;
+                const res = await fetch(url.toString(), { method: 'POST' });
+                if (!res.ok) throw new Error(`Server responded with HTTP ${res.status}`);
 
-                    try {
-                        const json = JSON.parse(raw);
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
 
-                        if (json.type === "token") {
-                            aiMsg.innerText += json.token;
-                        }
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
 
-                        if (json.type === "status") {
-                            console.log("STATUS:", json.step);
-                        }
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop(); // keep incomplete line
 
-                        if (json.type === "done") {
-                            return;
-                        }
-
-                    } catch (e) {
-                        console.warn("Bad chunk ignored:", raw);
+                    for (const line of lines) {
+                        if (!line.startsWith('data:')) continue;
+                        const raw = line.slice(5).trim();
+                        if (!raw) continue;
+                        try {
+                            const chunk = JSON.parse(raw);
+                            if (chunk.thought) {
+                                thoughtAcc += chunk.thought;
+                                thoughtBody.textContent = thoughtAcc;
+                                thoughtBlock.style.display = 'block';
+                            }
+                            if (chunk.content) {
+                                contentAcc += chunk.content;
+                                bubble.textContent = contentAcc;
+                            }
+                            scrollBottom();
+                        } catch (_) { /* skip malformed chunks */ }
                     }
                 }
+            } catch (err) {
+                bubble.textContent = `Error: ${err.message}`;
+                bubble.classList.add('error');
             }
 
-            // 🔥 flush remaining buffer safely
-            try {
-                const json = JSON.parse(buffer.replace("data: ", ""));
-                if (json.type === "token") {
-                    aiMsg.innerText += json.token;
-                }
-            } catch { }
+            bubble.classList.remove('streaming');
+            if (!contentAcc && !bubble.classList.contains('error')) {
+                bubble.textContent = '(empty response)';
+            }
+            sendBtn.disabled = false;
+            inputEl.focus();
         }
 
-        function send() {
-            const input = document.getElementById("input");
-            const text = input.value;
+        sendBtn.addEventListener('click', sendMessage);
 
-            if (!text) return;
+        inputEl.addEventListener('keydown', e => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
 
-            const div = document.createElement("div");
-            div.className = "msg user";
-            div.innerText = text;
-            chat.appendChild(div);
-
-            input.value = "";
-
-            stream(text);
-        }
+        inputEl.addEventListener('input', () => {
+            inputEl.style.height = 'auto';
+            inputEl.style.height = Math.min(inputEl.scrollHeight, 120) + 'px';
+        });
     </script>
-
 </body>
 
 </html>

@@ -44,11 +44,6 @@ app.include_router(files_router, prefix="/api/v1/files")
 app.include_router(chat_router, prefix="/api/v2/chat")
 
 
-@app.get("/stream")
-async def stream_page():
-    return FileResponse("stream.html")
-
-
 @app.websocket("/ws")
 async def ws_endpoint(websocket: WebSocket):
     global BUFFER
